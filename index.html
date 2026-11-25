@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification Webhook Inspector: a concept by Khushboo Malik for Surepass</title>
+<style>
+  :root{--bg:#f6f7fb;--card:#fff;--line:#e3e6ee;--txt:#1d2433;--mut:#6b7385;--acc:#3a5bd9;--ok:#1f9d61;--bad:#d64545;--warn:#c98a12}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  header{padding:20px 24px;background:var(--card);border-bottom:1px solid var(--line)}
+  header h1{margin:0;font-size:20px}
+  header p{margin:6px 0 0;color:var(--mut);font-size:13px;max-width:780px;line-height:1.5}
+  .note{font-size:13px;line-height:1.55;max-width:780px;margin-top:10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border:1px solid var(--line);border-radius:99px;color:var(--mut);margin-top:8px}
+  main{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;padding:20px 24px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--acc)}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:9px 8px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px;border-radius:6px}
+  .row:hover,.row.sel{background:#eef2ff}
+  .pill{font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
+  .ok{background:#e3f6ec;color:var(--ok)}.bad{background:#fde8e8;color:var(--bad)}.warn{background:#fdf3dd;color:var(--warn)}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  .tl{border-left:2px solid var(--line);margin:8px 0 8px 6px;padding-left:14px}
+  .tl div{margin:0 0 10px;position:relative;font-size:13px}
+  .tl div:before{content:"";position:absolute;left:-20px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--acc)}
+  .tl .x:before{background:var(--bad)}.tl .d:before{background:var(--warn)}
+  .explain{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;margin-top:8px}
+  button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:7px 11px;font-weight:600;cursor:pointer;font-size:12px}
+  .log{background:#0f1525;color:#cfe3ff;border-radius:8px;padding:10px;height:170px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.55}
+  .stats{display:flex;gap:10px;margin-bottom:10px}
+  .stat{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .stat b{font-size:20px;display:block}
+  .stat span{font-size:11px;color:var(--mut)}
+  footer{padding:12px 24px;color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Verification Webhook Inspector</h1>
+  <p>A small dev-console view for teams integrating KYC APIs: every verification call with its webhook timeline, a plain-language reason for each failure, and a replay button that shows duplicate deliveries being safely ignored.</p>
+  <div class="note">I was going through Surepass's KYC APIs and remembered how much time I spent debugging verification callbacks when I built KYC APIs on AWS at 1StopKYC. So I tried a quick prototype of the console I wished I had: one place to see what happened to a request, why it failed, and proof that a retried webhook doesn't get processed twice. It runs on sample data. - Khushboo</div>
+  <span class="tag">Unofficial concept by Khushboo Malik · sample data only · not affiliated with Surepass</span>
+</header>
+<main>
+  <section class="card">
+    <h2>Recent verifications</h2>
+    <div id="list"></div>
+  </section>
+  <section class="card">
+    <h2>Request detail</h2>
+    <div id="detail" style="font-size:13px;color:var(--mut)">Pick a request on the left.</div>
+  </section>
+  <section class="card" style="grid-column:1/-1">
+    <h2>Webhook replay (idempotency check)</h2>
+    <div class="stats">
+      <div class="stat"><b id="recv">0</b><span>deliveries received</span></div>
+      <div class="stat"><b id="proc">0</b><span>processed</span></div>
+      <div class="stat"><b id="dup">0</b><span>duplicates ignored</span></div>
+    </div>
+    <button onclick="replay()">Simulate 5 deliveries for the selected request (incl. retries)</button>
+    <div class="log" id="log" style="margin-top:10px"></div>
+  </section>
+</main>
+<footer>Plain HTML + JS. Request IDs, documents and reason codes are made up for the demo. Dedupe key = request_id + event type, like a processed-events table would store.</footer>
+<script>
+const reqs=[
+ {id:"req_7f3a91",api:"PAN Verification",doc:"ABCPK••••F",st:"success",ms:412,ev:[["10:02:11.104","request.received"],["10:02:11.516","source.responded","NSDL 200"],["10:02:11.520","webhook.sent","200 OK"]]},
+ {id:"req_7f3a95",api:"Bank Account (penny drop)",doc:"XXXX4471 · HDFC0001234",st:"failed",ms:5120,code:"BENEFICIARY_NAME_MISMATCH",ev:[["10:04:02.010","request.received"],["10:04:06.880","source.responded","name: K MALIK ≠ KHUSHBOO MALIK"],["10:04:07.130","webhook.sent","500 from client",1],["10:04:37.140","webhook.retry #1","200 OK",2]]},
+ {id:"req_7f3aa2",api:"Aadhaar OTP",doc:"XXXX XXXX 8812",st:"failed",ms:30000,code:"OTP_EXPIRED",ev:[["10:06:40.000","otp.sent"],["10:07:10.000","otp.expired","user did not submit in 30s",1],["10:07:10.020","webhook.sent","200 OK"]]},
+ {id:"req_7f3ab0",api:"GSTIN Verification",doc:"07AAACS••••1Z5",st:"success",ms:690,ev:[["10:09:15.300","request.received"],["10:09:15.990","source.responded","GSTN 200, Active"],["10:09:16.000","webhook.sent","200 OK"]]},
+ {id:"req_7f3ab9",api:"Driving Licence",doc:"DL-04••••••3321",st:"pending",ms:null,code:"SOURCE_TIMEOUT",ev:[["10:11:01.200","request.received"],["10:11:11.200","source.timeout","Parivahan >10s",2],["10:11:11.210","job.queued","will retry at 10:12:11"]]},
+];
+const reasons={
+ BENEFICIARY_NAME_MISMATCH:["Bank returned a different account holder name.","Usually initials or a missing surname. Try fuzzy name match (score ≥ 0.8) before rejecting, or ask the user to confirm the account holder name."],
+ OTP_EXPIRED:["The user didn't enter the Aadhaar OTP within the validity window.","Show a visible countdown in your UI and allow one resend. Don't auto-retry: a new OTP needs fresh user consent."],
+ SOURCE_TIMEOUT:["The government source didn't respond in time.","Nothing wrong on your side. The request is queued and you'll get a webhook when it completes, so don't call the API again for the same user."]
+};
+let sel=reqs[0], seen=new Set(), recv=0, proc=0, dup=0;
+const pill=s=>`<span class="pill ${s=="success"?"ok":s=="failed"?"bad":"warn"}">${s}</span>`;
+function list(){document.getElementById("list").innerHTML=reqs.map(r=>`<div class="row ${r===sel?"sel":""}" onclick="pick('${r.id}')"><div><b>${r.api}</b><div class="mono" style="color:var(--mut)">${r.id} · ${r.doc}</div></div>${pill(r.st)}</div>`).join("");}
+function pick(id){sel=reqs.find(r=>r.id==id);list();detail();}
+function detail(){
+  const r=sel, why=r.code&&reasons[r.code];
+  document.getElementById("detail").innerHTML=`<div style="color:var(--txt)"><b>${r.api}</b> ${pill(r.st)}</div><div class="mono" style="margin-top:4px">${r.id}${r.ms?" · "+r.ms+" ms":""}${r.code?" · "+r.code:""}</div>
+  <div class="tl">${r.ev.map(e=>`<div class="${e[3]==1?"x":e[3]==2?"d":""}"><span class="mono">${e[0]}</span> ${e[1]}${e[2]?` <span style="color:var(--mut)">· ${e[2]}</span>`:""}</div>`).join("")}</div>
+  ${why?`<div class="explain"><b>What happened:</b> ${why[0]}<br><b>What to do:</b> ${why[1]}</div>`:`<div class="explain">Verified. Nothing to do.</div>`}`;
+}
+function log(t,c){const l=document.getElementById("log");l.innerHTML+=`<div style="color:${c||"#cfe3ff"}">${t}</div>`;l.scrollTop=l.scrollHeight;}
+function replay(){
+  const evType="verification."+(sel.st=="success"?"completed":sel.st);
+  const deliveries=[0,0,1,0,2]; // attempts incl. duplicate redeliveries
+  deliveries.forEach((n,i)=>setTimeout(()=>{
+    recv++; const key=sel.id+":"+evType;
+    if(seen.has(key)){dup++; log(`#${recv} ${evType} ${sel.id} → already processed, 200 OK (ignored)`,"#f6c177");}
+    else{seen.add(key); proc++; log(`#${recv} ${evType} ${sel.id} → processed, status saved`,"#9ece6a");}
+    document.getElementById("recv").textContent=recv;document.getElementById("proc").textContent=proc;document.getElementById("dup").textContent=dup;
+  },i*350));
+}
+list();detail();
+</script>
+</body>
+</html>
